@@ -48,6 +48,7 @@ import javax.lang.model.util.Types;
 
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.ConstructType;
+import org.jboss.logging.annotations.CopyFrom;
 import org.jboss.logging.annotations.LoggingClass;
 import org.jboss.logging.annotations.MessageBundle;
 import org.jboss.logging.annotations.MessageLogger;
@@ -157,6 +158,7 @@ public final class Validator {
                 }
                 final Map<Integer, Parameter> positions = new TreeMap<>();
                 boolean validatePositions = false;
+                Parameter copyFromFound = null;
                 for (Parameter parameter : messageMethod.parameters()) {
                     // Validate the transform parameter
                     if (parameter.isAnnotatedWith(Transform.class)) {
@@ -200,6 +202,24 @@ public final class Validator {
                         if (!isTypeAssignableFrom(parameter, Throwable.class)) {
                             messages.add(createError(parameter, "The parameter annotated with @Suppressed must be assignable to a Throwable type."));
                         }
+                    }
+
+                    // Validate the @CopyFrom parameter is on a message bundle and the return type is the same type as the parameter
+                    if (parameter.isAnnotatedWith(CopyFrom.class)) {
+                        // Only a single @CopyFrom is allowed
+                        if (copyFromFound != null) {
+                            messages.add(createError(parameter, "Only one @%1$s parameter is allowed. Parameter %2$s was also annotated with %1$s.",
+                                    CopyFrom.class.getSimpleName(), copyFromFound));
+                        }
+                        if (!messageMethod.returnType().isThrowable()) {
+                            messages.add(createError(messageMethod, "The @%s parameter annotation can only be used with message bundle methods that return an exception.",
+                                    CopyFrom.class.getSimpleName()));
+                        }
+                        if (!types.isSameType(parameter.asType(), messageMethod.getReturnType())) {
+                            messages.add(createError(parameter, "The type of the parameter annotated with @%s must match the return type.",
+                                    CopyFrom.class.getSimpleName()));
+                        }
+                        copyFromFound = parameter;
                     }
                 }
                 // Check for missing indexed parameters

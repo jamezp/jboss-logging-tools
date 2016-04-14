@@ -58,6 +58,7 @@ import org.jboss.jdeparser.JParamDeclaration;
 import org.jboss.jdeparser.JType;
 import org.jboss.jdeparser.JTypes;
 import org.jboss.jdeparser.JVarDeclaration;
+import org.jboss.logging.annotations.CopyFrom;
 import org.jboss.logging.annotations.Field;
 import org.jboss.logging.annotations.Fields;
 import org.jboss.logging.annotations.Pos;
@@ -339,55 +340,37 @@ abstract class ImplementationClassModel extends ClassModel {
         return result;
     }
 
-    private JVarDeclaration createReturnType(final MessageMethod messageMethod, final JBlock body, final JCall format) {
-        boolean callInitCause = false;
+    private JVarDeclaration createReturnType(final MessageMethod messageMethod, final JBlock body, final JCall formatCall) {
+        final JAssignableExpr copyFromParameter = getCopyFromParameter(messageMethod);
         final ThrowableType returnType = messageMethod.returnType().throwableReturnType();
         final JType type = $t(returnType.name());
         // Import once more as the throwable return type may be different than the actual return type
         sourceFile._import(type);
-        final JCall result = type._new();
-        final JVarDeclaration resultField = body.var(FINAL, type, "result", result);
-        if (returnType.useConstructionParameters()) {
-            for (Parameter param : returnType.constructionParameters()) {
-                if (param.isMessageMethod()) {
-                    result.arg(format);
-                } else {
-                    result.arg($v(param.name()));
-                }
-            }
-            callInitCause = messageMethod.hasCause() && !returnType.causeSetInConstructor();
-        } else if (returnType.hasStringAndThrowableConstructor() && messageMethod.hasCause()) {
-            result.arg(format).arg($v(messageMethod.cause().name()));
-        } else if (returnType.hasThrowableAndStringConstructor() && messageMethod.hasCause()) {
-            result.arg($v(messageMethod.cause().name())).arg(format);
-        } else if (returnType.hasStringConstructor()) {
-            result.arg(format);
-            if (messageMethod.hasCause()) {
-                callInitCause = true;
-            }
-        } else if (returnType.hasThrowableConstructor() && messageMethod.hasCause()) {
-            result.arg($v(messageMethod.cause().name()));
-        } else if (returnType.hasStringAndThrowableConstructor() && !messageMethod.hasCause()) {
-            result.arg(format).arg(NULL);
-        } else if (returnType.hasThrowableAndStringConstructor() && !messageMethod.hasCause()) {
-            result.arg(NULL).arg(format);
-        } else if (messageMethod.hasCause()) {
-            callInitCause = true;
+
+        // Configure the message parameter
+        final JExpr format;
+        if (copyFromParameter != null) {
+            format = formatCall.plus(JExprs.str(": ")).plus(copyFromParameter.call("getLocalizedMessage"));
+        } else {
+            format = formatCall;
         }
-        // Assign the result field the result value
-        if (callInitCause) {
-            body.add($v(resultField).call("initCause").arg($v(messageMethod.cause().name())));
-        }
+
+        final JVarDeclaration resultField = addReturnTypeConstructor(messageMethod, body, format, type, copyFromParameter);
 
         // Get the @Property or @Properties annotation values
         addDefultProperties(messageMethod, ElementHelper.getAnnotations(messageMethod, Properties.class, Property.class), body, $v(resultField), false);
         addDefultProperties(messageMethod, ElementHelper.getAnnotations(messageMethod, Fields.class, Field.class), body, $v(resultField), true);
 
-        // Remove this caller from the stack trace
-        final JType arrays = $t(Arrays.class);
-        sourceFile._import(arrays);
-        final JVarDeclaration st = body.var(FINAL, $t(StackTraceElement.class).array(), "st", $v(resultField).call("getStackTrace"));
-        body.add($v(resultField).call("setStackTrace").arg(arrays.call("copyOfRange").arg($v(st)).arg(JExpr.ONE).arg($v(st).field("length"))));
+        if (copyFromParameter == null) {
+            // Remove this caller from the stack trace
+            final JType arrays = $t(Arrays.class);
+            sourceFile._import(arrays);
+            final JVarDeclaration st = body.var(FINAL, $t(StackTraceElement.class).array(), "st", $v(resultField).call("getStackTrace"));
+            body.add($v(resultField).call("setStackTrace").arg(arrays.call("copyOfRange").arg($v(st)).arg(JExpr.ONE).arg($v(st).field("length"))));
+        } else {
+            // Set the stack trace for the result to the stack trace from the @CopyFrom parameter
+            body.add($v(resultField).call("setStackTrace").arg(copyFromParameter.call("getStackTrace")));
+        }
 
         // Add any suppressed messages
         final Set<Parameter> suppressed = messageMethod.parametersAnnotatedWith(Suppressed.class);
@@ -460,6 +443,115 @@ abstract class ImplementationClassModel extends ClassModel {
                 body.add(resultField.call("set" + Character.toUpperCase(name.charAt(0)) + name.substring(1)).arg(resultValue));
             }
         }
+    }
+
+    private static JAssignableExpr getCopyFromParameter(final MessageMethod messageMethod) {
+        final Set<Parameter> parameters = messageMethod.parametersAnnotatedWith(CopyFrom.class);
+        if (parameters.isEmpty()) {
+            return null;
+        }
+        return $v(parameters.iterator().next().name());
+    }
+
+    private JVarDeclaration addReturnTypeConstructor(final MessageMethod messageMethod, final JBlock body,
+                                                     final JExpr format, final JType type,
+                                                     final JAssignableExpr copyFromParameter) {
+        final String resultFieldName = "result";
+        final JVarDeclaration resultField;
+        final ThrowableType returnType = messageMethod.returnType().throwableReturnType();
+        if (returnType.useConstructionParameters()) {
+            final JCall constructor = type._new();
+            for (Parameter param : returnType.constructionParameters()) {
+                if (param.isMessageMethod()) {
+                    constructor.arg(format);
+                } else {
+                    constructor.arg($v(param.name()));
+                }
+            }
+            resultField = body.var(FINAL, type, resultFieldName, constructor);
+            if (!returnType.causeSetInConstructor()) {
+                if (messageMethod.hasCause()) {
+                    initCause(body, $v(resultField), $v(messageMethod.cause().name()));
+                } else if (copyFromParameter != null) {
+                    initCause(body, $v(resultField), copyFromParameter.call("getCause"));
+                }
+            }
+        } else {
+            final JExpr cause;
+            if (messageMethod.hasCause()) {
+                cause = $v(messageMethod.cause().name());
+            } else if (copyFromParameter != null) {
+                cause = copyFromParameter.call("getCause");
+            } else {
+                if (returnType.hasStringConstructor()) {
+                    return body.var(FINAL, type, resultFieldName, type._new().arg(format));
+                } else {
+                    cause = NULL;
+                }
+            }
+
+            if (returnType.hasStringAndThrowableConstructor()) {
+                if (returnType.hasStringConstructor()) {
+                    if (cause == NULL) {
+                        resultField = body.var(FINAL, type, resultFieldName, type._new().arg(format));
+                    } else {
+                        resultField = body.var(FINAL, type, resultFieldName);
+                        final JIf ifBlock = body._if(cause.ne(NULL));
+                        ifBlock.block(Braces.REQUIRED)
+                                .add($v(resultField).assign(type._new().arg(format).arg(cause)));
+
+                        final JBlock elseBlock = ifBlock._else().block(Braces.REQUIRED);
+                        elseBlock.add($v(resultField).assign(type._new().arg(format)));
+                    }
+                } else {
+                    final JCall constructor = type._new()
+                            .arg(format)
+                            .arg(cause);
+                    resultField = body.var(FINAL, type, resultFieldName, constructor);
+                }
+            } else if (returnType.hasThrowableAndStringConstructor()) {
+                if (returnType.hasStringConstructor()) {
+                    if (cause == NULL) {
+                        resultField = body.var(FINAL, type, resultFieldName, type._new().arg(format));
+                    } else {
+                        resultField = body.var(FINAL, type, resultFieldName);
+                        final JIf ifBlock = body._if(cause.ne(NULL));
+                        ifBlock.block(Braces.REQUIRED)
+                                .add($v(resultField).assign(type._new().arg(cause).arg(format)));
+
+                        final JBlock elseBlock = ifBlock._else().block(Braces.REQUIRED);
+                        elseBlock.add($v(resultField).assign(type._new().arg(format)));
+                    }
+                } else {
+                    final JCall constructor = type._new()
+                            .arg(cause)
+                            .arg(format);
+                    resultField = body.var(FINAL, type, resultFieldName, constructor);
+                }
+            } else if (returnType.hasDefaultConstructor()) {
+                resultField = body.var(FINAL, type, resultFieldName, type._new());
+                if (cause != NULL) {
+                    initCause(body, $v(resultField), cause);
+                }
+            } else if (returnType.hasStringConstructor()) {
+                resultField = body.var(FINAL, type, resultFieldName, type._new().arg(format));
+                if (cause != NULL) {
+                    initCause(body, $v(resultField), cause);
+                }
+            } else if (returnType.hasThrowableConstructor()) {
+                resultField = body.var(FINAL, type, resultFieldName, type._new().arg(cause));
+            } else {
+                throw new ProcessingException(messageMethod, "Could not find constructor to create %s", returnType);
+            }
+        }
+
+        return resultField;
+    }
+
+    private void initCause(final JBlock body, final JAssignableExpr field, final JExpr cause) {
+        body._if(cause.ne(NULL))
+                .block(Braces.REQUIRED)
+                .add(field.call("initCause").arg(cause));
     }
 
     private static class JExprAnnotationValueVisitor extends SimpleAnnotationValueVisitor8<JExpr, Void> {

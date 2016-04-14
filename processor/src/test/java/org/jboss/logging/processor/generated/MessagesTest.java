@@ -24,6 +24,8 @@ package org.jboss.logging.processor.generated;
 
 import java.util.Arrays;
 
+import org.jboss.logging.processor.generated.CopyMessages.EqualityException;
+import org.jboss.logging.processor.generated.CopyMessages.ValueEqualityException;
 import org.jboss.logging.processor.generated.ValidMessages.StringOnlyException;
 import org.testng.Assert;
 import org.testng.annotations.Test;
@@ -34,7 +36,7 @@ import org.testng.annotations.Test;
 public class MessagesTest {
 
     @Test
-    public void testFormats() {
+    public void testFormats() throws Exception {
         Assert.assertEquals(ValidMessages.MESSAGES.testWithNewLine(), String.format(ValidMessages.TEST_MSG));
         Assert.assertEquals(ValidMessages.MESSAGES.noFormat(), ValidMessages.TEST_MSG);
         Assert.assertEquals(ValidMessages.MESSAGES.noFormatException(new IllegalArgumentException()).getLocalizedMessage(), ValidMessages.TEST_MSG);
@@ -122,6 +124,65 @@ public class MessagesTest {
         exception = MethodMessageConstants.MESSAGES.repeatableField();
         Assert.assertEquals(exception.type, String.class);
         Assert.assertEquals(exception.value, MethodMessageConstants.stringTest);
+    }
+
+    @Test
+    public void testCopyFrom() {
+        final String text = "Message added from test";
+        final EqualityException cause = new EqualityException("Cause of error");
+
+        EqualityException exception = new EqualityException(text);
+        EqualityException generated = CopyMessages.MESSAGES.simpleException(exception);
+        Assert.assertEquals(generated.getMessage(), CopyMessages.SIMPLE_MESSAGE + ": " + text);
+        Assert.assertEquals(generated, exception);
+
+        // Test cause copied from original message
+        exception = new EqualityException(text, cause);
+        generated = CopyMessages.MESSAGES.simpleException(exception);
+        Assert.assertEquals(generated.getMessage(), CopyMessages.SIMPLE_MESSAGE + ": " + text);
+        Assert.assertEquals(generated, exception);
+        Assert.assertEquals(generated.getCause(), cause);
+
+        // Test cause included with @Cause
+        exception = new EqualityException(text, cause);
+        generated = CopyMessages.MESSAGES.simpleException(exception, cause);
+        Assert.assertEquals(generated.getMessage(), CopyMessages.SIMPLE_MESSAGE + ": " + text);
+        Assert.assertEquals(generated, exception);
+        Assert.assertEquals(generated.getCause(), cause);
+
+        // The simpleInitCause uses the @Signature to ensure the initCause() is invoked
+        generated = CopyMessages.MESSAGES.simpleInitCause(exception, cause);
+        Assert.assertEquals(generated.getMessage(), CopyMessages.SIMPLE_MESSAGE + ": " + text);
+        Assert.assertEquals(generated, exception);
+        Assert.assertEquals(generated.getCause(), cause);
+    }
+
+    @Test
+    public void testValueCopyFrom() {
+        final String text = "Message added from test";
+        final String value = "value";
+        final EqualityException cause = new EqualityException("Cause of error");
+
+        // Test with value
+        ValueEqualityException exception = new ValueEqualityException(value, text);
+        ValueEqualityException generated = CopyMessages.MESSAGES.simpleValueException(value, exception);
+        Assert.assertEquals(generated.getMessage(), String.format(CopyMessages.SIMPLE_ARG_MESSAGE, value) + ": " + text);
+        Assert.assertEquals(generated, exception);
+        Assert.assertEquals(generated.getValue(), value);
+
+        // Test cause copied from original message
+        exception = new ValueEqualityException(value, text, cause);
+        generated = CopyMessages.MESSAGES.simpleValueException(value, exception);
+        Assert.assertEquals(generated.getMessage(), String.format(CopyMessages.SIMPLE_ARG_MESSAGE, value) + ": " + text);
+        Assert.assertEquals(generated, exception);
+        Assert.assertEquals(generated.getCause(), cause);
+
+        // Test cause included with @Cause
+        exception = new ValueEqualityException(value, text, cause);
+        generated = CopyMessages.MESSAGES.simpleValueException(cause, value, exception);
+        Assert.assertEquals(generated.getMessage(), String.format(CopyMessages.SIMPLE_ARG_MESSAGE, value) + ": " + text);
+        Assert.assertEquals(generated, exception);
+        Assert.assertEquals(generated.getCause(), cause);
     }
 
     private <T> void compare(final T[] a1, final T[] a2) {
