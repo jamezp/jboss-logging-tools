@@ -26,6 +26,7 @@ import static org.jboss.logging.processor.util.Objects.HashCodeBuilder;
 import static org.jboss.logging.processor.util.Objects.areEqual;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -40,6 +41,7 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 
+import org.jboss.logging.annotations.CopyFrom;
 import org.jboss.logging.annotations.Param;
 import org.jboss.logging.annotations.Signature;
 import org.jboss.logging.processor.model.MessageMethod;
@@ -250,6 +252,7 @@ final class ThrowableTypeFactory {
         private final MessageMethod messageMethod;
 
         private final Set<Parameter> constructionParameters;
+        private final Set<ThrowableType> allowedTypes;
 
         private boolean useConstructionParameters = false;
         private boolean causeSet = false;
@@ -265,6 +268,7 @@ final class ThrowableTypeFactory {
             super(processingEnv, type);
             this.messageMethod = messageMethod;
             constructionParameters = new LinkedHashSet<>();
+            this.allowedTypes = new LinkedHashSet<>();
         }
 
         @Override
@@ -307,6 +311,13 @@ final class ThrowableTypeFactory {
 
             } else {
                 super.init();
+            }
+            final Parameter copyFromParameter = messageMethod.parameterAnnotatedWith(CopyFrom.class);
+            if (copyFromParameter != null) {
+                final List<TypeMirror> possibleTypes = ElementHelper.getClassArrayAnnotationValue(copyFromParameter, CopyFrom.class, "value");
+                for (TypeMirror possibleType : possibleTypes) {
+                    allowedTypes.add(ThrowableTypeFactory.of(processingEnv, possibleType));
+                }
             }
         }
 
@@ -372,6 +383,11 @@ final class ThrowableTypeFactory {
         @Override
         public Set<Parameter> constructionParameters() {
             return constructionParameters;
+        }
+
+        @Override
+        public Collection<ThrowableType> allowedConstructionTypes() {
+            return allowedTypes;
         }
     }
 }

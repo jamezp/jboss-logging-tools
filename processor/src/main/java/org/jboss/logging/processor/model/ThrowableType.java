@@ -22,6 +22,8 @@
 
 package org.jboss.logging.processor.model;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Set;
 
 /**
@@ -85,6 +87,16 @@ public interface ThrowableType extends ClassType, Comparable<ThrowableType>, Del
      */
     default boolean causeSetInConstructor() {
         return false;
+    }
+
+    /**
+     * Returns a collection of types that may be returned instead of this type. These types must be assignable to this
+     * type.
+     *
+     * @return a collection of types which may be constructed and returned
+     */
+    default Collection<ThrowableType> allowedConstructionTypes() {
+        return Collections.emptySet();
     }
 
     /**

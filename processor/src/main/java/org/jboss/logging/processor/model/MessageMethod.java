@@ -58,6 +58,25 @@ public interface MessageMethod extends Comparable<MessageMethod>, JavaDocComment
     Set<Parameter> parametersAnnotatedWith(Class<? extends Annotation> annotation);
 
     /**
+     * Returns a single parameter annotated with the annotation.
+     * <p>
+     * This will just return the first parameter annotated with the annotation. If there is no parameter annotated with
+     * the parameter {@code null} is returned.
+     * </p>
+     *
+     * @param annotation the annotation to get the parameters for
+     *
+     * @return the single parameter or {@code null} if no parameter was found with the annotation
+     */
+    default Parameter parameterAnnotatedWith(Class<? extends Annotation> annotation) {
+        final Set<Parameter> parameters = parametersAnnotatedWith(annotation);
+        if (parameters.isEmpty()) {
+            return null;
+        }
+        return parameters.iterator().next();
+    }
+
+    /**
      * Returns the return type for the method.
      *
      * @return the return type for the method.
